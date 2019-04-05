@@ -1,0 +1,460 @@
+<html lang="ru"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><title>Функциональное программирование на языке Форт</title></head><body><h1 align="center">Функциональное программирование на языке Форт</h1><p align="center">Пётр Советов, <a href="mailto:peter.sovietov@gmail.com">peter.sovietov@gmail.com</a></p><ol><li><a href="#%D0%92%D0%B2%D0%B5%D0%B4%D0%B5%D0%BD%D0%B8%D0%B5">Введение</a></li><li><a href="#S-%D0%B2%D1%8B%D1%80%D0%B0%D0%B6%D0%B5%D0%BD%D0%B8%D1%8F+%D0%B8+%D1%81%D0%B1%D0%BE%D1%80%D0%BA%D0%B0+%D0%BC%D1%83%D1%81%D0%BE%D1%80%D0%B0">S-выражения и сборка мусора</a></li><li><a href="#%D0%9F%D1%80%D0%B0%D0%BA%D1%82%D0%B8%D1%87%D0%B5%D1%81%D0%BA%D0%BE%D0%B5+%D0%B8%D1%81%D0%BF%D0%BE%D0%BB%D1%8C%D0%B7%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5">Практическое использование</a></li><li><a href="#%D0%9F%D1%80%D0%BE%D0%B3%D1%80%D0%B0%D0%BC%D0%BC%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5+%D0%BD%D0%B0+%D1%83%D1%80%D0%BE%D0%B2%D0%BD%D0%B5+%D1%84%D1%83%D0%BD%D0%BA%D1%86%D0%B8%D0%B9">Программирование на уровне функций</a></li><li><a href="#%D0%9B%D0%B5%D0%BD%D0%B8%D0%B2%D1%8B%D0%B5+%D0%B2%D1%8B%D1%87%D0%B8%D1%81%D0%BB%D0%B5%D0%BD%D0%B8%D1%8F:+%D0%BF%D0%BE%D1%82%D0%BE%D0%BA%D0%B8">Ленивые вычисления: потоки</a></li><li><a href="#%D0%9B%D0%B8%D1%82%D0%B5%D1%80%D0%B0%D1%82%D1%83%D1%80%D0%B0">Литература</a></li><li><a href="#%D0%98%D1%81%D1%85%D0%BE%D0%B4%D0%BD%D1%8B%D0%B5+%D1%82%D0%B5%D0%BA%D1%81%D1%82%D1%8B">Исходные тексты</a></li></ol><br><a name="Введение"></a><h2>Введение</h2><p>Элементы функционального программирования [<a href="#Field">Field</a>]
+ с переменным успехом используются в языках самых разных стилей. Форт в 
+этом отношении не исключение. Впрочем, чаще всего речь идёт лишь об 
+ограниченном применении функций высшего порядка. Для более свободного 
+использования техники функционального программирования нужно, в первую 
+очередь, освободить программиста от ручного управления памятью. Иными 
+словами, необходима сборка мусора. C подобной целью обычно проектируют 
+очередной диалект Форта, как это было сделано в случае с Postscript и 
+Joy.</p><p>В своей статье я предлагаю иной подход: S-выражения [<a href="#McCarthy">McCarthy</a>],
+ используемые в семействе языков Lisp/Scheme, реализованы в виде 
+компактного ANS Forth-расширения на самом Форте. При этом исследуются 
+некоторые вопросы практического применения этого расширения.</p><br><a name="S-выражения и сборка мусора"></a><h2>S-выражения и сборка мусора</h2><p>Элемент S-выражения представляется в виде четвёрки:</p><pre>: .s-mark ;
+: .s-tag [ 1 CELLS ] LITERAL + ;
+: .s-car [ 2 CELLS ] LITERAL + ;
+: .s-cdr [ 3 CELLS ] LITERAL + ;
+: /s-obj [ 4 CELLS ] LITERAL ;</pre>Содержимое полей <code>.s-car</code> и <code>.s-cdr</code> зависит от поля <code>.s-tag</code>,
+ которое хранит адрес определяющей процедуры. В текущей реализации 
+атомами могут быть число или адрес слова Форта. Можно легко добавить в 
+систему и атомы иных типов, изменив соответствующие поля.<p></p><p>Сборка мусора организована на основе классического алгоритма <em>пометить и собрать(mark&amp;sweep)</em> [<a href="#Field">Field</a>]. Имеется три источника ячеек, за которыми необходимо проследить на стадии пометки:</p><ol><li>стек локальных S-выражений <code>s-locals</code>, соответствующий стеку параметров Форта,</li><li>стек <code>s-calls</code>, аналогичный стеку возвратов,</li><li>список <code>s-globals</code>, связывающий текущие глобальные переменные, в которых хранятся S-выражения.</li></ol>Служебное слово <code>s-reserve</code>
+ подготавливает сборщик мусора к работе, устанавливая соответствующие 
+служебные переменные и составляя список свободных ячеек. Для вызова ему 
+требуется указать адрес новой кучи и количество содержащихся в ней 
+ячеек.<p></p><p>Для работы с <code>s-locals</code> имеются служебные слова <code>p-&gt;s</code> и <code>s-&gt;p</code>, отвечающие за перенос значения со стека параметров Форта на данный стек и обратно, а также вполне очевидные <code>s-dup</code>, <code>s-drop</code>, <code>s-swap</code> и <code>s-over</code>. Для работы с <code>s-calls</code> имеются слова <code>s-&gt;c</code>, <code>c-&gt;s</code> и <code>c-pick</code>, которое копирует элемент из <code>s-calls</code> на вершину <code>s-locals</code>. Наконец, для работы с глобальными S-переменными предназначено определяющее слово <code>s-variable</code>. Доступ к определяемым переменным осуществляется с помощью <code>get</code> и <code>set</code>.</p><p>С помощью <code>-&gt;s</code> в куче размещается число, указанное в качестве аргумента, а соответствующий указатель помещается на <code>s-locals</code>. Слово <code>xt-&gt;s</code> работает аналогичным образом для адресов слов Форта. Слово <code>s-&gt;</code> снимает элемент-указатель со стека <code>s-locals</code> и выполняет связанную с этим элементом определяющую процедуру. Если элемент является парой, указатель на неё возвращается на <code>s-locals</code>,
+ если это число, оно помещается на стек параметров Форта, и если, 
+наконец, элемент оказывается адресом слова Форта, это слово выполняется.
+ Данная схема позволяет единообразно работать с атомами различных типов.
+ Слово <code>s-execute</code> выполняет полученное в качестве аргумента S-выражение, как программу, последовательно вызывая для каждого её элемента слово <code>s-&gt;</code>. Программой может быть список, точечная пара или атом. Для поддержки вложенного исполнения S-выражений используется стек <code>s-calls</code>.</p><p>Для отладки имеется слово <code>.free</code>, сообщающее о расходе памяти и <code>.locals</code>, которое информирует о текущей глубине стека <code>s-locals</code>. Слово <code>.se</code> печатает на экране S-выражение, указанное в качестве аргумента.</p><br><a name="Практическое использование"></a><h2>Практическое использование</h2><p>В своём расширении я реализовал несколько процедур, оперирующих S-выражениями в духе Scheme [<a href="#R5RS">R5RS</a>]. Ниже приведены некоторые примеры их использования. Для краткости введено слово <code>n</code> в качестве синонима <code>-&gt;s</code>.</p><p><table frame="vsides" rules="cols" cellpadding="10"><tbody><tr><th>Выражение</th><th>Результат</th></tr><tr><td>1 n 2 n cons</td><td>( 1 . 2 )</td></tr><tr><td>1 n 2 n () cons cons</td><td>( 1 2 )</td></tr><tr><td>1 n 2 n 3 n 3 list</td><td>( 1 2 3 )</td></tr><tr><td>s( 1 n 2 n 3 n )s</td><td>( 1 2 3 )</td></tr><tr><td>s( 1 n )s pair? () null? 42 n number? ' DUP xt-&gt;s xt?</td><td>-1 -1 -1 -1</td></tr><tr><td>s( 1 n s( 2 n )s )s cdr car</td><td>( 2 )</td></tr><tr><td>1 n 2 n cons 3 n s-over set-car! 4 n s-over set-cdr!</td><td>( 3 . 4 )</td></tr><tr><td>1 n 1 n eq? s( 1 n s( 2 n )s )s s( 1 n s( 2 n )s )s equal?</td><td>-1 -1</td></tr><tr><td>s( 1 n 2 n 3 n )s 1 list-tail</td><td>( 2 3 )</td></tr><tr><td>s( 1 n 2 n 3 n )s 1 list-ref</td><td>2</td></tr><tr><td>s( 42 n ' EMIT xt-&gt;s )s s-execute</td><td>*</td></tr><tr><td>s( 1 n 2 n 3 n )s length</td><td>3</td></tr><tr><td>s( 1 n 2 n 3 n )s () ' cons xt-&gt;s fold</td><td>( ( ( () . 1 ) . 2 ) . 3 )</td></tr><tr><td>s( 1 n 2 n 3 n )s reverse</td><td>( 3 2 1 )</td></tr><tr><td>s( 1 n 2 n 3 n )s s( 1 n ' list xt-&gt;s )s map</td><td>( ( 1 ) ( 2 ) ( 3 ) )</td></tr><tr><td>s( 1 n 2 n )s s( 3 n 4 n )s append</td><td>( 1 2 3 4 )</td></tr><tr><td>s( 1 n s( 2 n )s 3 n s( 4 n )s )s ' number? xt-&gt;s filter</td><td>( 1 3 )</td></tr><tr><td>s( CHAR F n CHAR P n )s ' EMIT 1pr for-each</td><td>FP</td></tr><tr><td>s( 1 n 2 n 3 n )s 0 n ' + 2op fold</td><td>6</td></tr><tr><td>s( 1 n 2 n 3 n )s ' 2* 1op map</td><td>( 2 4 6 )</td></tr><tr><td>s( -1 n 2 n -3 n )s ' 0&lt; 1pr filter</td><td>( -1 -3 )</td></tr></tbody></table></p><p>Для
+ более удобного использования слов Форта в качестве аргументов функций 
+высшего порядка, оперирующих S-выражениями, введены следующие 
+слова-обёртки: <code>1pr</code>(одноместный предикат, при использовании вместе с <code>for-each</code> pr можно читать, как procedure), <code>1op</code> и <code>2op</code>(одноместная и двухместная функции).</p><p>Ниже приводится чуть более расширенный пример:</p><p></p><pre>: subsets' ( s: e x -- s: e y ) s-over s-swap cons ;
+: subsets ( s: x -- s: y )
+   s-dup null? IF s-drop () 1 list EXIT THEN
+   s-dup s-&gt;c cdr RECURSE c-&gt;s car s-over
+   ['] subsets' xt-&gt;s map s-swap s-drop append ;
+
+s( 1 n 2 n 3 n )s subsets .se
+( () ( 3 ) ( 2 ) ( 2 3 ) ( 1 ) ( 1 3 ) ( 1 2 ) ( 1 2 3 ) )</pre><p></p><p>Слово <code>subsets</code> порождает все подмножества данного множества.</p><br><a name="Программирование на уровне функций"></a><h2>Программирование на уровне функций</h2><p>Джон Бэкус в своей знаменитой тьюринговской лекции [<a href="#Backus">Backus</a>]
+ предложил особый стиль функционального программирования без переменных.
+ Попробуем реализовать на Форте пример умножения матриц в этом стиле.</p><p>Для начала нам понадобится слово <code>trans</code>, транспонирующее матрицу:</p><p></p><pre>: trans ( s: x -- s: y )
+   s-dup car null? IF s-drop () EXIT THEN s-dup s-&gt;c
+   ['] car xt-&gt;s map c-&gt;s ['] cdr xt-&gt;s map RECURSE cons ;
+
+s( s( 1 n 2 n )s s( 3 n 4 n )s )s trans .se
+( ( 1 3 ) ( 2 4 ) )</pre><p></p><p>Теперь дело за APL-подобными <code>/+</code> и <code>/*</code>, и <code>aa</code>(apply-to-all, применить ко всем):</p><p></p><pre>: /+ ( s: x -- s: y ) 0 -&gt;s ['] + 2op fold ;
+: /* ( s: x -- s: y ) 1 -&gt;s ['] * 2op fold ;
+: aa ( f s: x -- s: y ) xt-&gt;s map ;
+
+s( 1 n 3 n 5 n )s /+ .se
+9
+s( 1 n 3 n 5 n )s /* .se
+15</pre><p></p><p>К этому моменту мы в состоянии написать функцию, вычисляющую внутреннее произведение:</p><p></p><pre>: ip ( s: x -- s: y ) trans ['] /* aa /+ ;
+
+s( s( 1 n 2 n )s s( 3 n 4 n )s )s ip .se
+11</pre><p></p><p>Осталось реализовать только две вспомогательные функции: <code>distl</code>(дистрибутивно слева) и <code>distr</code>(дистрибутивно справа):</p><p></p><pre>: cadr cdr car ;
+
+: distl' ( s: x e -- s: y ) s-&gt;c s-dup c-&gt;s 2 list ;
+: distl ( s: x -- s: y )
+   s-dup car s-swap cadr ['] distl' aa s-swap s-drop ;
+: distr' ( s: x e -- s: y ) s-over 2 list ;
+: distr ( s: x -- s: y )
+   s-dup cadr s-swap car ['] distr' aa s-swap s-drop ;
+
+s( 42 n s( 1 n 2 n 3 n )s )s distl .se
+( ( 42 1 ) ( 42 2 ) ( 42 3 ) )
+s( s( 1 n 2 n 3 n )s 42 n )s distr .se
+( ( 1 42 ) ( 2 42 ) ( 3 42 ) )</pre><p></p><p>Матричное умножение будет выглядеть следующим образом:</p><p></p><pre>: mm' ( s: x -- s: y ) ['] ip aa ;
+: mm ( s: x -- s: y )
+   trans 2 list distr ['] distl aa ['] mm' aa ;
+
+s(
+  s( 1 n 0 n 2 n )s
+  s( 1 n 3 n 1 n )s )s
+s(
+  s( 3 n 1 n )s
+  s( 2 n 1 n )s
+  s( 1 n 0 n )s )s mm .se
+( ( 5 1 ) ( 10 4 ) )</pre><p></p><br><a name="Ленивые вычисления: потоки"></a><h2>Ленивые вычисления: потоки</h2><p>В этом разделе представлен набросок реализации потоков(ленивых списков) в том виде, как они описаны в известном учебнике <em>Структура и интерпретация компьютерных программ</em> [<a href="#SICP">SICP</a>].</p><p>Введём слово <code>cons-stream</code>, создающее пару, в <code>cdr</code>-части которой будет храниться не готовое значение, как в случае с обычным <code>cons</code>,
+ а задержанный объект, "обещание" вычислить это значение. Если 
+задержанный объект уже был однажды вычислен, следует заменить его его 
+результатом, чтобы избежать повторных ненужных вычислений. Этой работой 
+занимается слово <code>stream-cdr</code>. Для реализации запоминания используется флаг, который <code>cons-stream</code> устанавливает в состояние <code>FALSE</code>.</p><p></p><pre>: cons-stream ( s: x y -- s: z ) FALSE -&gt;s cons cons ;
+: stream-cdr ( s: x -- s: y )
+   cdr s-dup cdr s-&gt; IF car EXIT THEN
+   TRUE -&gt;s s-over set-cdr! s-dup s-&gt;c
+   car s-execute s-dup c-&gt;s set-car! ;
+
+1 n s( 2 n () cons-stream )s cons-stream
+s-dup .se
+( 1 ( ( 2 () . 0 ) ) . 0 )
+s-dup stream-cdr car .se
+2
+.se
+( 1 ( 2 () . 0 ) . -1 )</pre><p></p><p>Приведённый выше пример может 
+подсказать идею организовать циклическую структуру, наподобие 
+следующей(следует соблюдать осторожность при выведении циклов на 
+печать):</p><p></p><pre>s-variable 'ones
+: ones 'ones get ;
+1 n ' ones xt-&gt;s cons-stream 'ones set
+
+ones .se
+( 1 ones . 0 )
+ones stream-cdr stream-cdr stream-cdr car .se
+1</pre><p></p><p><font size="-1"><em>Слово <code>'.atom</code> было переопределено, чтобы иметь возможность распечатывать имена слов Форта в S-выражениях.</em></font></p><p>Отвлекаясь,
+ стоит заметить, что в более сложной реализации потоков имело бы смысл 
+организовать рекурсию на уровне S-выражений, в виде специальной 
+конструкции для организации произвольных циклов внутри списочной 
+структуры.</p><p>Мы получили возможность создавать простейшие 
+бесконечные потоки. Чтобы перевести несколько первых элементов потока в 
+обычный список, введём слово <code>take</code>:</p><p></p><pre>: take ( n s: x -- s: y )
+   DUP IF s-dup car s-swap stream-cdr 1- RECURSE cons EXIT THEN
+   DROP s-drop () ;
+
+ones 10 take .se
+( 1 1 1 1 1 1 1 1 1 1 )</pre><p></p><p>Слово <code>from</code> порождает
+ бесконечный поток целых чисел, начиная с заданного числа. Замечу, что в
+ отсутствие стандартного способа обратиться к адресу определяемого 
+слова, мне пришлось прибегнуть к помощи <code>VARIABLE</code>.</p><p></p><pre>VARIABLE 'from
+: from ( n -- s: x )
+   DUP -&gt;s s( SWAP 1+ -&gt;s 'from @ xt-&gt;s )s cons-stream ;
+' from 'from !
+
+1 from 10 take .se
+( 1 2 3 4 5 6 7 8 9 10 )</pre><p></p><p>Займёмся теперь потоковым аналогом <code>map</code>, <code>stream-map</code>:</p><p></p><pre>: ?list ( s: x -- s: y ) s-dup pair? IF EXIT THEN 1 list ;
+
+VARIABLE 'stream-map'
+: stream-map ( s: x f -- s: y )
+   s-&gt;c s-&gt;c 1 c-pick car 2 c-pick s-execute
+   s( c-&gt;s c-&gt;s ?list 'stream-map' @ xt-&gt;s )s cons-stream ;
+: stream-map' ( s: x f -- s: y )
+   s-&gt;c stream-cdr c-&gt;s stream-map ;
+' stream-map' 'stream-map' !
+
+1 from ' 2* 1op stream-map 10 take .se
+( 2 4 6 8 10 12 14 16 18 20 )</pre><p></p><p>Слово <code>?list</code> необходимо для случая появления слова Форта в качестве функции-аргумента <code>stream-map</code>.</p><p>Известно,
+ что при работе с потоками момент вызова задержанной процедуры не 
+определён. Поэтому, в отсутствие автоматического механизма, аналогичного
+ <em>лексическим замыканиям</em> [<a href="#Field">Field</a>], мы не имеем возможности использовать в таких процедурах внешние данные из стека.</p><p>Рассмотрим работу <code>stream-map</code> более подробно:</p><p></p><pre>1 from ' 2* 1op stream-map ' 1+ 1op stream-map 10 take .se
+( 3 5 7 9 11 13 15 17 19 21 )
+1 from ' 2* 1op stream-map ' 1+ 1op stream-map s-dup .se
+( 3 ( ( 2 ( ( 1 ( 2 from ) . 0 ) ( s-&gt; 2* -&gt;s ) stream-map' ) . 0 ) ( s-&gt; 1+ -&gt;s ) stream-map' ) . 0 )
+stream-cdr .se
+( 5 ( ( 4 ( ( 2 ( 3 from ) . 0 ) ( s-&gt; 2* -&gt;s ) stream-map' ) . 0 ) ( s-&gt; 1+ -&gt;s ) stream-map' ) . 0 )</pre><p></p><p>Видим,
+ что на каждом этапе выполняется минимум необходимой работы по 
+вычислениям. Этот подход выгодно отличается от продемонстрированного в 
+предыдущем разделе.</p><p>Попробуем теперь комбинировать потоки:</p><p></p><pre>VARIABLE 'combine-streams'
+: combine-streams ( s: x y f -- s: z )
+   s-&gt;c s-&gt;c s-&gt;c 1 c-pick car 2 c-pick car 3 c-pick s-execute
+   s( c-&gt;s c-&gt;s c-&gt;s ?list 'combine-streams' @ xt-&gt;s )s
+   cons-stream ;
+: combine-streams' ( s: x y f -- s: z )
+   s-&gt;c s-&gt;c stream-cdr c-&gt;s stream-cdr c-&gt;s combine-streams ;
+' combine-streams' 'combine-streams' !
+
+: add-streams ( s: x y -- s: z ) ['] + 2op combine-streams ;
+: mul-streams ( s: x y -- s: z ) ['] * 2op combine-streams ;
+
+1 from s-dup mul-streams 10 take .se
+( 1 4 9 16 25 36 49 64 81 100 )</pre><p></p><p>На этой основе можно определить поток чисел Фибоначчи:</p><p></p><pre>s-variable 'fibs
+: fibs 'fibs get ;
+: fibs' ( -- s: x ) fibs stream-cdr fibs add-streams ;
+0 n s( 1 n ' fibs' xt-&gt;s cons-stream )s cons-stream 'fibs set
+
+fibs 45 take 40 list-tail .se
+( 102334155 165580141 267914296 433494437 701408733 )</pre><p></p><p>В 
+заключение, предположим, что нам требуется протабулировать функцию и 
+несколько степеней её конечных разностей. Попробуем реализовать это в 
+виде бесконечных потоков:</p><p></p><pre>: d ( s: x -- s: y )
+   s-dup stream-cdr s-swap ['] - 2op combine-streams ;
+
+: y(x) DUP DUP * * ;
+
+0 from ' y(x) 1op stream-map 10 take .se
+( 0 1 8 27 64 125 216 343 512 729 )
+0 from ' y(x) 1op stream-map d 10 take .se
+( 1 7 19 37 61 91 127 169 217 271 )
+0 from ' y(x) 1op stream-map d d 10 take .se
+( 6 12 18 24 30 36 42 48 54 60 )
+0 from ' y(x) 1op stream-map d d d 10 take .se
+( 6 6 6 6 6 6 6 6 6 6 )
+0 from ' y(x) 1op stream-map d d d d 10 take .se
+( 0 0 0 0 0 0 0 0 0 0 )</pre><p></p><br><a name="Литература"></a><h2>Литература</h2><p><a name="Backus">[Backus] </a>John Backus, <em>Can programming be liberated from the von Neumann style?: a functional style and its algebra of programs</em>, Communications of the ACM, v.21 n.8, p.613-641, Aug. 1978. (Имеется перевод: Бэкус Дж. <em>Можно ли освободить программирование от стиля фон Неймана? Функциональный стиль и соответствующая алгебра программ</em>.
+ - Пер. с англ. Мартынюка В. В. - В кн.: Лекции лауреатов премии 
+Тьюринга за первые двадцать лет 1966-1985. - Под ред. Р. Эшенхерста. - 
+М.: Мир, 1993. - с. 84-158).<br><a href="http://www.stanford.edu/class/cs242/readings/backus.pdf">http://www.stanford.edu/class/cs242/readings/backus.pdf</a></p><p><a name="Field">[Field] </a>A. J. Field, Peter G. Harrison: Functional Programming Addison-Wesley, 1988. (Имеется перевод: А. Филд, П. Харрисон. <em>Функциональное программирование</em>. - М.: Мир, 1993).</p><p><a name="McCarthy">[McCarthy] </a>John McCarthy. <em>Recursive Functions of Symbolic Expressions and Their Computation by Machine, Part I</em>. Comm. ACM, 3(4):184-195, April 1960.<br><a href="http://www-formal.stanford.edu/jmc/recursive/recursive.html">http://www-formal.stanford.edu/jmc/recursive/recursive.html</a></p><p><a name="R5RS">[R5RS] </a>R. Kelsey, W. Clinger, J. Rees (eds.), <em>Revised5 Report on the Algorithmic Language Scheme. Higher-Order and Symbolic Computation</em>, Vol. 11, No. 1, September, 1998 and ACM SIGPLAN Notices, Vol. 33, No. 9, October, 1998.<br><a href="http://www.schemers.org/Documents/Standards/R5RS/">http://www.schemers.org/Documents/Standards/R5RS/</a></p><p><a name="SICP">[SICP] </a>Harold Abelson and Gerald Jay Sussman, with Julie Sussman. <em>Structure and Interpretation of Computer Programs</em>.
+ MIT Press (Cambridge, MA) and McGraw-Hill (New York), 1985.  (Имеется 
+перевод: Абельсон Х., Сассман Дж. при участии Сассман Дж. <em>Структура и интерпретация компьютерных программ</em>. - М.: Добросвет, КДУ, 2006).<br><a href="http://mitpress.mit.edu/sicp/">http://mitpress.mit.edu/sicp/</a></p><br><a name="Исходные тексты"></a><h2>Исходные тексты</h2><p></p><pre>( S-expressions 20070727, Peter Sovietov )
+
+: .s-mark ;
+: .s-tag [ 1 CELLS ] LITERAL + ;
+: .s-car [ 2 CELLS ] LITERAL + ;
+: .s-cdr [ 3 CELLS ] LITERAL + ;
+: /s-obj [ 4 CELLS ] LITERAL ;
+
+VARIABLE s-heap
+VARIABLE s-size
+VARIABLE s-free
+
+VARIABLE s-locals
+VARIABLE s-lp
+
+: lp-reset ( n ) s-locals @ s-lp ! ;
+: s-depth ( -- n ) s-lp @ s-locals @ - CELL / ;
+
+: p-&gt;s ( x -- s: x ) s-lp @ ! CELL s-lp +! ;
+: s-&gt;p ( s: x -- x ) [ CELL NEGATE ] LITERAL s-lp +! s-lp @ @ ;
+: s-dup ( s: x -- s: x x ) s-&gt;p DUP p-&gt;s p-&gt;s ;
+: s-drop ( s: x ) s-&gt;p DROP ;
+: s-swap ( s: x y -- s: y x ) s-&gt;p s-&gt;p SWAP p-&gt;s p-&gt;s ;
+: s-over ( s: x y -- s: x y x )
+   s-&gt;p s-&gt;p SWAP OVER p-&gt;s p-&gt;s p-&gt;s ;
+
+VARIABLE s-calls
+VARIABLE s-cp
+
+: cp-reset ( n ) s-calls @ s-cp ! ;
+
+: s-&gt;c ( s: x -- c: x ) s-&gt;p s-cp @ ! CELL s-cp +! ;
+: c-&gt;s ( c: x -- s: x )
+   [ CELL NEGATE ] LITERAL s-cp +! s-cp @ @ p-&gt;s ;
+: c-pick ( n -- s: x )
+   [ CELL NEGATE ] LITERAL * s-cp @ + @ p-&gt;s ;
+
+: (pair) ( a ) p-&gt;s ;
+: (null) ( a ) p-&gt;s ;
+: (number) ( a ) .s-car @ ;
+: (xt) ( a ) .s-car @ EXECUTE ;
+
+CREATE '() /s-obj ALLOT ' (null) '() .s-tag !
+: () ( -- s: 0 ) '() p-&gt;s ;
+
+VARIABLE s-globals
+
+: s-variable CREATE HERE '() , s-globals @ , s-globals ! ;
+: get ( a -- s: x ) @ p-&gt;s ;
+: set ( a s: x ) s-&gt;p SWAP ! ;
+
+: s-reserve ( a n )
+   s-size ! s-heap ! '() s-free !
+   s-heap @ DUP &gt;R s-size @ /s-obj * +
+   BEGIN R@ OVER &lt; WHILE
+     FALSE R@ .s-mark !
+     ['] (pair) R@ .s-tag !
+     s-free @ R@ .s-cdr !
+     R@ s-free ! R&gt; /s-obj + &gt;R
+   REPEAT R&gt; 2DROP lp-reset cp-reset 0 s-globals ! ;
+
+: s-mark ( a )
+   BEGIN DUP '() = IF DROP EXIT THEN
+     DUP .s-mark @ IF DROP EXIT THEN
+     DUP .s-mark TRUE SWAP !
+     DUP .s-tag @ ['] (pair) = WHILE
+       DUP .s-car @ RECURSE .s-cdr @
+   REPEAT DROP ;
+: s-sweep 
+   '() s-free ! s-heap @ DUP &gt;R s-size @ /s-obj * +
+   BEGIN R@ OVER &lt; WHILE
+     R@ .s-mark @ IF FALSE R@ .s-mark !
+     ELSE ['] (pair) R@ .s-tag !
+       s-free @ R@ .s-cdr ! R@ s-free !
+     THEN R&gt; /s-obj + &gt;R
+   REPEAT R&gt; 2DROP ;
+: gc
+   s-locals @ &gt;R s-lp @ BEGIN R@ OVER &lt; WHILE
+     R@ @ s-mark R&gt; CELL+ &gt;R REPEAT R&gt; 2DROP
+   s-calls @ &gt;R s-cp @ BEGIN R@ OVER &lt; WHILE
+     R@ @ s-mark R&gt; CELL+ &gt;R REPEAT R&gt; 2DROP
+   s-globals @ BEGIN DUP WHILE DUP @ s-mark
+     CELL+ @ REPEAT DROP s-sweep
+   s-free @ '() = ABORT" se: gc" ;
+
+: (cons) ( x y -- z )
+   s-free @ '() = IF gc THEN
+   s-free @ DUP .s-cdr @ s-free ! &gt;R
+   R@ .s-cdr ! R@ .s-car ! R&gt; ;
+: cons ( s: x y -- s: z )
+   s-over s-&gt;p s-dup s-&gt;p (cons) s-drop s-drop p-&gt;s ;
+
+: -&gt;s ( n -- s: n )
+   0 (cons) DUP .s-tag ['] (number) SWAP ! p-&gt;s ;
+: xt-&gt;s ( a -- s: a )
+   0 (cons) DUP .s-tag ['] (xt) SWAP ! p-&gt;s ;
+: s-&gt; ( s: x ) s-&gt;p DUP .s-tag @ EXECUTE ;
+
+: pair? ( s: x -- ? ) s-&gt;p .s-tag @ ['] (pair) = ;
+: null? ( s: x -- ? ) s-&gt;p '() = ;
+: number? ( s: x -- ? ) s-&gt;p .s-tag @ ['] (number) = ;
+: xt? ( s: x -- ? ) s-&gt;p .s-tag @ ['] (xt) = ;
+
+: car ( s: x -- s: y )
+   s-dup pair? 0= ABORT" se: car" s-&gt;p .s-car @ p-&gt;s ;
+: cdr ( s: x -- s: y )
+   s-dup pair? 0= ABORT" se: cdr" s-&gt;p .s-cdr @ p-&gt;s ;
+: set-car! ( s: x y ) 
+   s-dup pair? 0= ABORT" se: set-car!" s-&gt;p .s-car set ;
+: set-cdr! ( s: x y ) 
+   s-dup pair? 0= ABORT" se: set-cdr!" s-&gt;p .s-cdr set ;
+
+: list ( n s: ... -- s: x )
+   () BEGIN DUP WHILE cons 1- REPEAT DROP ;
+: s( ( -- n ) s-depth ;
+: )s ( n s: ... -- s: x ) s-depth SWAP - list ;
+
+: eq? ( s: x y -- ? )
+   s-&gt;p s-&gt;p OVER .s-tag @ OVER .s-tag @ = &gt;R
+   OVER .s-car @ OVER .s-car @ = &gt;R
+   .s-cdr @ SWAP .s-cdr @ = R&gt; AND R&gt; AND ;
+: equal? ( s: x y -- ? )
+   BEGIN s-dup pair? s-over pair? AND WHILE
+     s-over car s-over car RECURSE 0= IF
+       s-drop s-drop FALSE EXIT THEN cdr s-swap cdr
+   REPEAT eq? ;
+
+: list-tail ( n s: x -- s: y )
+   BEGIN DUP WHILE cdr 1- REPEAT DROP ;
+: list-ref ( n s: x -- s: y ) list-tail car ;
+
+: s-execute ( s: f )
+   BEGIN s-dup pair? WHILE s-dup s-&gt;c car s-&gt; c-&gt;s cdr
+   REPEAT s-dup null? IF s-drop EXIT THEN s-&gt; ;
+
+: for-each-pair ( s: x f )
+   BEGIN s-over pair? WHILE s-dup s-&gt;c s-over cdr s-&gt;c
+     s-execute c-&gt;s c-&gt;s REPEAT s-drop s-drop ;
+
+: last-pair' ( s: x e -- s: e ) s-swap s-drop ;
+: last-pair ( s: x -- s: y )
+   s-dup cdr ['] last-pair' xt-&gt;s for-each-pair ;
+
+: for-each ( s: x f ) ['] car xt-&gt;s s-swap cons for-each-pair ;
+
+: length' ( i s: e -- j ) s-drop 1+ ;
+: length ( s: x -- n ) 0 ['] length' xt-&gt;s for-each ;
+
+: fold ( s: x z f -- s: y ) s-&gt;c s-swap c-&gt;s for-each ;
+
+: reverse' ( s: x e -- s: y ) s-swap cons ;
+: reverse ( s: x -- s: y ) () ['] reverse' xt-&gt;s fold ;
+
+: reverse!' ( s: x e -- s: y ) s-dup s-&gt;c set-cdr! c-&gt;s ;
+: reverse! ( s: x -- s: y )
+   () s-swap ['] reverse!' xt-&gt;s for-each-pair ;
+
+: map' ( s: f x e -- s: y )
+   s-swap s-&gt;c s-swap s-dup s-&gt;c s-execute
+   c-&gt;s s-swap c-&gt;s cons ;
+: map ( s: x f -- s: y )
+   s-swap () ['] map' xt-&gt;s fold reverse! s-swap s-drop ;
+
+: list-copy ( s: x -- s: y ) () map ;
+
+: append ( s: x y -- s: z )
+   s-swap s-dup null? IF s-drop EXIT THEN
+   list-copy s-dup s-&gt;c last-pair set-cdr! c-&gt;s ;
+
+: filter' ( s: f x e -- s: y )
+   s-&gt;c s-&gt;c s-&gt;c 3 c-pick 1 c-pick s-execute
+   c-&gt;s c-&gt;s c-&gt;s IF s-swap cons EXIT THEN s-drop ;
+: filter ( s: x f -- s: y )
+   s-swap () ['] filter' xt-&gt;s fold reverse! s-swap s-drop ;
+
+: 1pr ( a -- s: f ) s( SWAP ['] s-&gt; xt-&gt;s xt-&gt;s )s ;
+: 1op ( a -- s: f )
+   s( SWAP ['] s-&gt; xt-&gt;s xt-&gt;s ['] -&gt;s xt-&gt;s )s ;
+: 2op ( a -- s: f )
+   s( SWAP ['] s-&gt; xt-&gt;s s-dup ['] SWAP xt-&gt;s xt-&gt;s
+   ['] -&gt;s xt-&gt;s )s ;
+
+( debug )
+
+: (.atom) ( s: x )
+   s-dup number? IF s-&gt; . EXIT THEN
+   s-dup xt? IF s-drop ." xt " EXIT THEN
+   s-dup null? IF s-drop ." () " EXIT THEN
+   s-drop ." ? " ;
+VARIABLE '.atom ' (.atom) '.atom !
+: .atom '.atom @ EXECUTE ;
+: .se ( s: x )
+   s-dup pair? IF ." ( "
+     BEGIN s-dup car RECURSE cdr s-dup pair? 0= UNTIL
+     s-dup null? IF s-drop ELSE ." . " .atom THEN ." ) "
+   ELSE .atom THEN ;
+
+: gc-free ( -- n )
+   s-free @ 0 &gt;R BEGIN DUP '() =
+     IF DROP R&gt; EXIT THEN .s-cdr @ R&gt; 1+ &gt;R AGAIN ;
+: .free gc-free . ;
+: .locals s-depth . ;
+
+HERE 1024 CELLS ALLOT s-locals !
+HERE 1024 CELLS ALLOT s-calls !
+HERE 1024 /s-obj * ALLOT 1024 s-reserve</pre><p></p><p><b>Программирование на уровне функций (пример к разделу)</b></p><p></p><pre>: n -&gt;s ;
+: cadr cdr car ;
+
+: trans ( s: x -- s: y )
+   s-dup car null? IF s-drop () EXIT THEN s-dup s-&gt;c
+   ['] car xt-&gt;s map c-&gt;s ['] cdr xt-&gt;s map RECURSE cons ;
+
+: /+ ( s: x -- s: y ) 0 -&gt;s ['] + 2op fold ;
+: /* ( s: x -- s: y ) 1 -&gt;s ['] * 2op fold ;
+: aa ( f s: x -- s: y ) xt-&gt;s map ;
+
+: ip ( s: x -- s: y ) trans ['] /* aa /+ ;
+
+: distl' ( s: x e -- s: y ) s-&gt;c s-dup c-&gt;s 2 list ;
+: distl ( s: x -- s: y )
+   s-dup car s-swap cadr ['] distl' aa s-swap s-drop ;
+: distr' ( s: x e -- s: y ) s-over 2 list ;
+: distr ( s: x -- s: y )
+   s-dup cadr s-swap car ['] distr' aa s-swap s-drop ;
+
+: mm' ( s: x -- s: y ) ['] ip aa ;
+: mm ( s: x -- s: y )
+   trans 2 list distr ['] distl aa ['] mm' aa ;</pre><p></p><p><b>Ленивые вычисления: потоки (пример к разделу)</b></p><p></p><pre>: cons-stream ( s: x y -- s: z ) FALSE -&gt;s cons cons ;
+: stream-cdr ( s: x -- s: y )
+   cdr s-dup cdr s-&gt; IF car EXIT THEN
+   TRUE -&gt;s s-over set-cdr! s-dup s-&gt;c
+   car s-execute s-dup c-&gt;s set-car! ;
+
+: take ( n s: x -- s: y )
+   DUP IF s-dup car s-swap stream-cdr 1- RECURSE cons EXIT THEN
+   DROP s-drop () ;
+
+VARIABLE 'from
+: from ( n -- s: x )
+   DUP -&gt;s s( SWAP 1+ -&gt;s 'from @ xt-&gt;s )s cons-stream ;
+' from 'from !
+
+: ?list ( s: x -- s: y ) s-dup pair? IF EXIT THEN 1 list ;
+
+VARIABLE 'stream-map'
+: stream-map ( s: x f -- s: y )
+   s-&gt;c s-&gt;c 1 c-pick car 2 c-pick s-execute
+   s( c-&gt;s c-&gt;s ?list 'stream-map' @ xt-&gt;s )s cons-stream ;
+: stream-map' ( s: x f -- s: y )
+   s-&gt;c stream-cdr c-&gt;s stream-map ;
+' stream-map' 'stream-map' !
+
+VARIABLE 'combine-streams'
+: combine-streams ( s: x y f -- s: z )
+   s-&gt;c s-&gt;c s-&gt;c 1 c-pick car 2 c-pick car 3 c-pick s-execute
+   s( c-&gt;s c-&gt;s c-&gt;s ?list 'combine-streams' @ xt-&gt;s )s
+   cons-stream ;
+: combine-streams' ( s: x y f -- s: z )
+   s-&gt;c s-&gt;c stream-cdr c-&gt;s stream-cdr c-&gt;s combine-streams ;
+' combine-streams' 'combine-streams' !
+
+: add-streams ( s: x y -- s: z ) ['] + 2op combine-streams ;
+: mul-streams ( s: x y -- s: z ) ['] * 2op combine-streams ;
+
+s-variable 'ones
+: ones 'ones get ;
+1 n ' ones xt-&gt;s cons-stream 'ones set
+
+s-variable 'fibs
+: fibs 'fibs get ;
+: fibs' ( -- s: x ) fibs stream-cdr fibs add-streams ;
+0 n s( 1 n ' fibs' xt-&gt;s cons-stream )s cons-stream 'fibs set
+
+: d ( s: x -- s: y )
+   s-dup stream-cdr s-swap ['] - 2op combine-streams ;</pre><p></p></body></html>
